@@ -65,6 +65,7 @@ import java.util.function.Function;
 
 import kotlin.text.StringsKt;
 import tw.nekomimi.nekogram.DatacenterActivity;
+import tw.nekomimi.nekogram.NagramXConfig
 import tw.nekomimi.nekogram.helpers.AppRestartHelper;
 import tw.nekomimi.nekogram.helpers.CloudSettingsHelper;
 import tw.nekomimi.nekogram.helpers.PasscodeHelper;
@@ -351,15 +352,15 @@ public class NekoSettingsActivity extends BaseFragment {
                         case VIEW_TYPE_TEXT_LINK: {
                             TextSettingsCell textCell = (TextSettingsCell) holder.itemView;
                             if (position == xChannelRow) {
-                                textCell.setTextAndValue(getString(R.string.XChannel), "@NagramX", true);
+                                textCell.setTextAndValue(getString(R.string.XChannel), NagramXConfig.X_CHANNEL_DISPLAY, true);
                             } else if (position == channelRow) {
-                                textCell.setTextAndValue(getString(R.string.OfficialChannel), "@nagram_channel", true);
+                                textCell.setTextAndValue(getString(R.string.OfficialChannel), NagramXConfig.OFFICIAL_CHANNEL_DISPLAY, true);
                             } else if (position == channelTipsRow) {
-                                textCell.setTextAndValue(getString(R.string.TipsChannel), "@" + "NagramTips", true);
+                                textCell.setTextAndValue(getString(R.string.TipsChannel), NagramXConfig.TIPS_CHANNEL_DISPLAY, true);
                             } else if (position == sourceCodeRow) {
-                                textCell.setTextAndValue(getString(R.string.SourceCode), "Github", true);
+                                textCell.setTextAndValue(getString(R.string.SourceCode), NagramXConfig.SOURCE_CODE_LABEL, true);
                             } else if (position == translationRow) {
-                                textCell.setTextAndValue(getString(R.string.TransSite), "Crowdin", true);
+                                textCell.setTextAndValue(getString(R.string.TransSite), NagramXConfig.TRANSLATION_LABEL, true);
                             } else if (position == datacenterStatusRow) {
                                 textCell.setText(getString(R.string.DatacenterStatus), true);
                             }
@@ -393,15 +394,15 @@ public class NekoSettingsActivity extends BaseFragment {
                 } else if (position == translatorRow) {
                     presentFragment(new NekoTranslatorSettingsActivity());
                 } else if (position == xChannelRow) {
-                    MessagesController.getInstance(currentAccount).openByUserName("NagramX", NekoSettingsActivity.this, 1);
+                    MessagesController.getInstance(currentAccount).openByUserName(NagramXConfig.X_CHANNEL_USERNAME, NekoSettingsActivity.this, 1);
                 } else if (position == channelRow) {
-                    MessagesController.getInstance(currentAccount).openByUserName("nagram_channel", NekoSettingsActivity.this, 1);
+                    MessagesController.getInstance(currentAccount).openByUserName(NagramXConfig.OFFICIAL_CHANNEL_USERNAME, NekoSettingsActivity.this, 1);
                 } else if (position == channelTipsRow) {
-                    MessagesController.getInstance(currentAccount).openByUserName("NagramTips", NekoSettingsActivity.this, 1);
+                    MessagesController.getInstance(currentAccount).openByUserName(NagramXConfig.TIPS_CHANNEL_USERNAME, NekoSettingsActivity.this, 1);
                 } else if (position == translationRow) {
-                    Browser.openUrl(getParentActivity(), "https://crowdin.com/project/NagramX");
+                    Browser.openUrl(getParentActivity(), NagramXConfig.TRANSLATION_URL);
                 } else if (position == sourceCodeRow) {
-                    Browser.openUrl(getParentActivity(), "https://github.com/risin42/NagramX");
+                    Browser.openUrl(getParentActivity(), NagramXConfig.SOURCE_CODE_URL);
                 } else if (position == datacenterStatusRow) {
                     presentFragment(new DatacenterActivity(0));
                 } else if (position == importSettingsRow) {

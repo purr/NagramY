@@ -1,3 +1,52 @@
+# NagramY
+
+A fork of Nagram X with enhanced configuration management and streamlined release workflows.
+
+### Configuration Management
+
+- Configuration file: [`TMessagesProj/src/main/java/tw/nekomimi/nekogram/NagramXConfig.java`](TMessagesProj/src/main/java/tw/nekomimi/nekogram/NagramXConfig.java)
+- Uses vanilla Android keys:
+  - API ID: `6`
+  - API Hash: `eb06d4abfb49dc3eeb1aeb98ae0f581e`
+
+### GitHub Actions Setup
+
+To enable automated builds and releases:
+
+1. **Fork the repository** and go to Settings → Secrets and variables → Actions
+
+2. **Configure build properties**
+   Create a `keys/local.properties` file with:
+
+   ```
+   KEYSTORE_PASS=your_keystore_password
+   ALIAS_NAME=your_key_alias
+   ALIAS_PASS=your_alias_password
+   TELEGRAM_APP_ID=6
+   TELEGRAM_APP_HASH=eb06d4abfb49dc3eeb1aeb98ae0f581e
+   ```
+
+3. **Encode your local.properties:**
+
+   ```bash
+   base64 -w 0 keys/local.properties
+   ```
+
+4. **Add required secrets:**
+
+   - `HELPER_BOT_TOKEN` - Your Telegram bot token
+   - `LOCAL_PROPERTIES` - Base64 encoded local.properties content
+   - `CHANNEL_MAIN` - Telegram channel ID for main releases
+   - `CHANNEL_CANARY` - Telegram channel ID for canary builds
+   - `CHANNEL_DEV` - Telegram channel ID for dev builds
+
+5. **Push to trigger builds:**
+   - Push to `main` → Production release
+   - Push to `canary` → Beta release
+   - Push to `dev` → Debug release
+
+---
+
 # Nagram X
 
 A variant of [Nagram](https://github.com/NextAlone/Nagram) with additional features.
@@ -43,7 +92,7 @@ You can grab the latest versions in these two ways:
 > Some changes of Nagram and NekoX have been removed
 
 ----
-<details> 
+<details>
 <summary><strong>Nagram Changes</strong></summary>
 
 1. Nice icon (thanks to MaitungTM)

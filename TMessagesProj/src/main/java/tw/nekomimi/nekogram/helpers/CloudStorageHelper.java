@@ -12,11 +12,13 @@ import org.telegram.tgnet.tl.TL_bots;
 
 import java.util.HashMap;
 
+import tw.nekomimi.nekogram.NagramXConfig;
+
 public class CloudStorageHelper extends AccountInstance {
 
     private static final SparseArray<CloudStorageHelper> Instance = new SparseArray<>();
-    private static final long WEBVIEW_BOT_ID = 1433866570L;
-    private static final String WEBVIEW_BOT = "NextAloneBot";
+    private static final long WEBVIEW_BOT_ID = NagramXConfig.WEBVIEW_BOT_ID;
+    private static final String WEBVIEW_BOT = NagramXConfig.WEBVIEW_BOT_USERNAME;
 
     private final Gson gson = new Gson();
 
