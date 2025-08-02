@@ -1,0 +1,634 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - main
+      - canary
+      - dev
+    paths-ignore:
+      - "**.md"
+      - ".github/**"
+      - "metadata/**"
+      - "!.github/workflows/build.yml"
+  workflow_dispatch:
+    inputs:
+      message:
+        description: "Custom message for the release"
+        required: false
+        default: "Manual release build"
+      skip_upload:
+        description: "Skip upload to Telegram (yes/no)"
+        required: false
+        default: "no"
+
+jobs:
+  ffmpeg:
+    name: Native Build (FFmpeg)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Fetch Status
+        run: |
+          git submodule status TMessagesProj/jni/ffmpeg > ffmpeg_status
+          git submodule status TMessagesProj/jni/libvpx > libvpx_status
+          git submodule status TMessagesProj/jni/dav1d > libdav1d_status
+      - name: FFmpeg Cache
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            TMessagesProj/jni/ffmpeg/build
+            TMessagesProj/jni/libvpx/build
+            TMessagesProj/jni/dav1d/build
+          key: ${{ hashFiles('ffmpeg_status', 'libvpx_status', 'libdav1d_status', 'TMessagesProj/jni/*ffmpeg*.sh', 'TMessagesProj/jni/*libvpx*.sh', 'TMessagesProj/jni/*dav1d*.sh', 'TMessagesProj/jni/patches/ffmpeg/*') }}
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        if: steps.cache.outputs.cache-hit != 'true'
+        with:
+          python-version: "3.12"
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        if: steps.cache.outputs.cache-hit != 'true'
+        with:
+          java-version: "17"
+          distribution: "temurin"
+      - name: Setup Android SDK Tools
+        uses: android-actions/setup-android@v3
+        if: steps.cache.outputs.cache-hit != 'true'
+      - name: Install NDK
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          echo "y" | sdkmanager --install "ndk;21.4.7075529" "cmake;3.22.1" --sdk_root=${ANDROID_SDK_ROOT} &> /dev/null
+          echo "sdk.dir=${ANDROID_HOME}" > local.properties
+          echo "android.ndkversion=21.4.7075529" >> local.properties
+      - name: Native Build
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          ./run init action ffmpeg
+          ./run init libs libvpx
+          ./run init libs dav1d
+          ./run init libs ffmpeg
+
+  boringssl:
+    name: Native Build (BoringSSL)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Fetch Status
+        run: |
+          git submodule status TMessagesProj/jni/boringssl > boringssl_status
+      - name: BoringSSL Cache
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            TMessagesProj/jni/boringssl/build
+          key: ${{ hashFiles('boringssl_status') }}
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        if: steps.cache.outputs.cache-hit != 'true'
+        with:
+          java-version: "17"
+          distribution: "temurin"
+      - name: Setup Android SDK Tools
+        uses: android-actions/setup-android@v3
+        if: steps.cache.outputs.cache-hit != 'true'
+      - name: Install NDK
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          echo "y" | sdkmanager --install "ndk;21.4.7075529" "cmake;3.22.1" --sdk_root=${ANDROID_SDK_ROOT} &> /dev/null
+          echo "sdk.dir=${ANDROID_HOME}" > local.properties
+          echo "android.ndkversion=21.4.7075529" >> local.properties
+      - name: Native Build
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          ./run init action boringssl
+          ./run init libs boringssl
+
+  native:
+    name: Native Build (Telegram)
+    runs-on: ubuntu-latest
+    needs:
+      - ffmpeg
+      - boringssl
+    strategy:
+      matrix:
+        flavor:
+          - arm64-v8a
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Fetch Status
+        run: |
+          git submodule status TMessagesProj/jni/ffmpeg > ffmpeg_status
+          git submodule status TMessagesProj/jni/libvpx > libvpx_status
+          git submodule status TMessagesProj/jni/dav1d > libdav1d_status
+          git submodule status TMessagesProj/jni/boringssl > boringssl_status
+      - name: Native Cache
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            TMessagesProj/src/main/libs
+          key: ${{ hashFiles('TMessagesProj/jni/**', 'ffmpeg_status', 'boringssl_status') }}-${{ matrix.flavor }}
+      - name: Checkout Library
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          git submodule update --init 'TMessagesProj/jni/*'
+      - name: FFmpeg Cache
+        uses: actions/cache@v4
+        if: steps.cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            TMessagesProj/jni/ffmpeg/build
+            TMessagesProj/jni/libvpx/build
+            TMessagesProj/jni/dav1d/build
+          key: ${{ hashFiles('ffmpeg_status', 'libvpx_status', 'libdav1d_status', 'TMessagesProj/jni/*ffmpeg*.sh', 'TMessagesProj/jni/*libvpx*.sh', 'TMessagesProj/jni/*dav1d*.sh', 'TMessagesProj/jni/patches/ffmpeg/*') }}
+      - name: BoringSSL Cache
+        uses: actions/cache@v4
+        if: steps.cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            TMessagesProj/jni/boringssl/build
+          key: ${{ hashFiles('boringssl_status') }}
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        if: steps.cache.outputs.cache-hit != 'true'
+        with:
+          java-version: "17"
+          distribution: "temurin"
+      - name: Setup Android SDK Tools
+        uses: android-actions/setup-android@v3
+        if: steps.cache.outputs.cache-hit != 'true'
+      - name: Install NDK
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          echo "y" | sdkmanager --install "ndk;21.4.7075529" "cmake;3.22.1" --sdk_root=${ANDROID_SDK_ROOT} &> /dev/null
+          echo "sdk.dir=${ANDROID_HOME}" > local.properties
+          echo "android.ndkversion=21.4.7075529" >> local.properties
+      - name: Fix BoringSSL
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          cd TMessagesProj/jni
+          ./patch_boringssl.sh
+      - name: Native Build
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          export NATIVE_TARGET="${{ matrix.flavor }}"
+          ./run libs native
+
+  build-and-release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    needs:
+      - native
+    env:
+      NATIVE_TARGET: "arm64-v8a"
+    steps:
+      - name: Check Required Secrets
+        id: check-secrets
+        run: |
+          # Base required secrets
+          required_secrets=("HELPER_BOT_TOKEN" "LOCAL_PROPERTIES" "CHANNEL_MAIN")
+          missing_secrets=()
+
+          for secret in "${required_secrets[@]}"; do
+            if [ -z "${!secret}" ]; then
+              missing_secrets+=("$secret")
+            fi
+          done
+
+          if [ ${#missing_secrets[@]} -ne 0 ]; then
+            echo "❌ Missing required secrets: ${missing_secrets[*]}"
+            echo ""
+            echo "Please configure these secrets in your repository settings:"
+            echo "  Settings → Secrets and variables → Actions → New repository secret"
+            echo ""
+            echo "Required secrets:"
+            echo "  - HELPER_BOT_TOKEN: Your Telegram bot token"
+            echo "  - LOCAL_PROPERTIES: Build properties configuration"
+            echo "  - CHANNEL_MAIN: Telegram channel ID for main branch (mandatory)"
+            echo ""
+            echo "Optional secrets for other branches:"
+            echo "  - CHANNEL_CANARY: Telegram channel ID for canary branch"
+            echo "  - CHANNEL_DEV: Telegram channel ID for dev branch"
+            exit 1
+          fi
+
+          # Check if current branch has a configured channel
+          BRANCH_NAME="${{ github.ref_name }}"
+          SKIP_BUILD="false"
+
+          case "$BRANCH_NAME" in
+            "main")
+              if [ -z "$CHANNEL_MAIN" ]; then
+                SKIP_BUILD="true"
+              fi
+              ;;
+            "canary")
+              if [ -z "$CHANNEL_CANARY" ]; then
+                echo "⚠️ No CHANNEL_CANARY configured, skipping build for canary branch"
+                SKIP_BUILD="true"
+              fi
+              ;;
+            "dev")
+              if [ -z "$CHANNEL_DEV" ]; then
+                echo "⚠️ No CHANNEL_DEV configured, skipping build for dev branch"
+                SKIP_BUILD="true"
+              fi
+              ;;
+          esac
+
+          echo "SKIP_BUILD=$SKIP_BUILD" >> $GITHUB_ENV
+
+          if [ "$SKIP_BUILD" = "true" ]; then
+            echo "skip_build=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "✅ All required secrets are configured for $BRANCH_NAME branch"
+        env:
+          HELPER_BOT_TOKEN: ${{ secrets.HELPER_BOT_TOKEN }}
+          LOCAL_PROPERTIES: ${{ secrets.LOCAL_PROPERTIES }}
+          CHANNEL_MAIN: ${{ secrets.CHANNEL_MAIN }}
+          CHANNEL_CANARY: ${{ secrets.CHANNEL_CANARY }}
+          CHANNEL_DEV: ${{ secrets.CHANNEL_DEV }}
+
+      - name: Checkout
+        if: steps.check-secrets.outputs.skip_build != 'true'
+        uses: actions/checkout@v4
+      - name: Set up JDK 17
+        if: steps.check-secrets.outputs.skip_build != 'true'
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+      - name: Setup Android SDK Tools
+        if: steps.check-secrets.outputs.skip_build != 'true'
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK
+        if: steps.check-secrets.outputs.skip_build != 'true'
+        run: |
+          echo "y" | sdkmanager --install "ndk;21.4.7075529" "cmake;3.22.1" --sdk_root=${ANDROID_SDK_ROOT} &> /dev/null
+          echo "sdk.dir=${ANDROID_HOME}" > local.properties
+          echo "android.ndkversion=21.4.7075529" >> local.properties
+      - name: Fetch Status
+        if: steps.check-secrets.outputs.skip_build != 'true'
+        run: |
+          git submodule status TMessagesProj/jni/ffmpeg > ffmpeg_status
+          git submodule status TMessagesProj/jni/boringssl > boringssl_status
+      - name: Native Cache (arm64-v8a)
+        if: steps.check-secrets.outputs.skip_build != 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            TMessagesProj/src/main/libs
+          key: ${{ hashFiles('TMessagesProj/jni/**', 'ffmpeg_status', 'boringssl_status') }}-arm64-v8a
+      - name: Configure Gradle
+        if: steps.check-secrets.outputs.skip_build != 'true'
+        run: |
+          echo "sdk.dir=${ANDROID_HOME}" >> local.properties
+
+      - name: Modify Gradle JVM Args
+        if: steps.check-secrets.outputs.skip_build != 'true'
+        run: |
+          sed -i '/^org\.gradle\.jvmargs=/d' gradle.properties
+          echo "org.gradle.jvmargs=-Xmx8G -XX:MaxMetaspaceSize=2G -XX:+UseParallelGC -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8" >> gradle.properties
+          cat gradle.properties
+
+      - name: Gradle cache
+        if: steps.check-secrets.outputs.skip_build != 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.gradle
+          key: gradle-${{ hashFiles('**/*.gradle') }}
+
+      - name: Configure Build Type
+        if: steps.check-secrets.outputs.skip_build != 'true'
+        run: |
+          BRANCH_NAME="${{ github.ref_name }}"
+
+          if [ "$BRANCH_NAME" = "main" ]; then
+            # Production build - full optimization
+            sed -i 's/^-dontoptimize$/#-dontoptimize/' TMessagesProj/proguard-rules.pro
+            echo "BUILD_VARIANT=Release" >> $GITHUB_ENV
+            echo "✅ Configured for PRODUCTION build (optimized)"
+          elif [ "$BRANCH_NAME" = "canary" ]; then
+            # Beta build - keep some debug info
+            echo "BUILD_VARIANT=ReleaseDebug" >> $GITHUB_ENV
+            echo "🐤 Configured for CANARY build (beta with debug info)"
+          else
+            # Dev build - full debug
+            echo "BUILD_VARIANT=Debug" >> $GITHUB_ENV
+            echo "🔧 Configured for DEBUG build (full debug features)"
+          fi
+
+      - name: Build APK
+        if: steps.check-secrets.outputs.skip_build != 'true'
+        run: |
+          export LOCAL_PROPERTIES="${{ secrets.LOCAL_PROPERTIES }}"
+          export BUILD_TIMESTAMP=$(date +%s)
+
+          # Build based on variant
+          if [ "${{ env.BUILD_VARIANT }}" = "Release" ]; then
+            ./gradlew TMessagesProj:assembleRelease
+          elif [ "${{ env.BUILD_VARIANT }}" = "ReleaseDebug" ]; then
+            ./gradlew TMessagesProj:assembleReleaseDebug
+          else
+            ./gradlew TMessagesProj:assembleDebug
+          fi
+
+          # Find the appropriate APK
+          if [ "${{ env.BUILD_VARIANT }}" = "Debug" ]; then
+            APK=$(find TMessagesProj/build/outputs/apk -name '*arm64-v8a*debug*.apk' | head -1)
+          else
+            APK=$(find TMessagesProj/build/outputs/apk -name '*arm64-v8a*.apk' | grep -v debug | head -1)
+          fi
+
+          echo "APK_PATH=$APK" >> $GITHUB_ENV
+          echo "BUILD_TIMESTAMP=$BUILD_TIMESTAMP" >> $GITHUB_ENV
+          echo "Found APK: $APK"
+
+      - name: Upload Build Artifact
+        if: steps.check-secrets.outputs.skip_build != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.ref_name }}-${{ github.sha }}-apk
+          path: ${{ env.APK_PATH }}
+          retention-days: 7
+
+      - name: Upload to Telegram
+        if: steps.check-secrets.outputs.skip_build != 'true' && github.event.inputs.skip_upload != 'yes' && !contains(github.event.head_commit.message, '[skip upload]')
+        env:
+          BOT_TOKEN: ${{ secrets.HELPER_BOT_TOKEN }}
+        run: |
+          # Determine channel based on branch
+          BRANCH_NAME="${{ github.ref_name }}"
+          case "$BRANCH_NAME" in
+            "main")
+              CHAT_ID="${{ secrets.CHANNEL_MAIN }}"
+              BRANCH_EMOJI="🚀"
+              ;;
+            "canary")
+              CHAT_ID="${{ secrets.CHANNEL_CANARY }}"
+              BRANCH_EMOJI="🐤"
+              ;;
+            "dev")
+              CHAT_ID="${{ secrets.CHANNEL_DEV }}"
+              BRANCH_EMOJI="🔧"
+              ;;
+            *)
+              echo "❌ Unknown branch: $BRANCH_NAME"
+              exit 1
+              ;;
+          esac
+
+          # Get version info
+          VERSION_NAME=$(grep "APP_VERSION_NAME=" gradle.properties | cut -d'=' -f2)
+          VERSION_CODE=$(grep "APP_VERSION_CODE=" gradle.properties | cut -d'=' -f2)
+
+          # Get commit info
+          COMMIT_ID="${{ github.sha }}"
+          COMMIT_ID_SHORT="${COMMIT_ID:0:7}"
+          COMMIT_URL="https://github.com/${{ github.repository }}/commit/${COMMIT_ID}"
+
+          # Get trigger type and message
+          if [ "${{ github.event_name }}" = "push" ]; then
+            COMMIT_MESSAGE="${{ github.event.head_commit.message }}"
+            TRIGGER_TYPE="Auto"
+          else
+            COMMIT_MESSAGE="${{ github.event.inputs.message }}"
+            TRIGGER_TYPE="Manual"
+          fi
+
+          # Get build info
+          BUILD_DATE=$(date -u +'%Y-%m-%d %H:%M UTC')
+          APK_FILE="${{ env.APK_PATH }}"
+          APK_SIZE_MB=$(echo "scale=1; $(stat -c%s "$APK_FILE") / 1048576" | bc)
+
+          # Get build type label
+          case "${{ env.BUILD_VARIANT }}" in
+            "Release")
+              BUILD_TYPE="Production"
+              ;;
+            "ReleaseDebug")
+              BUILD_TYPE="Beta"
+              ;;
+            "Debug")
+              BUILD_TYPE="Debug"
+              ;;
+          esac
+
+          # Prepare compact caption with all necessary info
+          CAPTION="${BRANCH_EMOJI} **NagramX ${VERSION_NAME}** (${VERSION_CODE})"$'\n'
+          CAPTION+="🌿 \`${BRANCH_NAME}\` • ${BUILD_TYPE} • ${TRIGGER_TYPE}"$'\n'
+          CAPTION+="🔗 [\`${COMMIT_ID_SHORT}\`](${COMMIT_URL})"$'\n'
+          CAPTION+="💬 ${COMMIT_MESSAGE}"$'\n'
+          CAPTION+="📦 ${APK_SIZE_MB} MB • ${BUILD_DATE}"
+
+          # Get thumbnail
+          THUMB_PATH="TMessagesProj/src/main/ic_launcher_nagram_block_round-playstore.png"
+
+          # Upload APK
+          echo "Uploading to Telegram channel for branch: $BRANCH_NAME"
+          RESPONSE=$(curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendDocument" \
+            -F "chat_id=${CHAT_ID}" \
+            -F "document=@${APK_FILE}" \
+            -F "thumbnail=@${THUMB_PATH}" \
+            -F "caption=${CAPTION}" \
+            -F "parse_mode=Markdown")
+
+          if echo "$RESPONSE" | grep -q '"ok":true'; then
+            echo "✅ APK uploaded successfully to $BRANCH_NAME channel"
+          else
+            echo "❌ Failed to upload APK to Telegram"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
+
+      - name: Create GitHub Release
+        if: steps.check-secrets.outputs.skip_build != 'true' && github.event.inputs.skip_upload != 'yes' && !contains(github.event.head_commit.message, '[skip upload]')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Get version info from gradle.properties
+          VERSION_NAME=$(grep "APP_VERSION_NAME=" gradle.properties | cut -d'=' -f2)
+          VERSION_CODE=$(grep "APP_VERSION_CODE=" gradle.properties | cut -d'=' -f2)
+
+          # Determine branch and tag prefix
+          BRANCH_NAME="${{ github.ref_name }}"
+          case "$BRANCH_NAME" in
+            "main")
+              TAG_PREFIX=""
+              BRANCH_LABEL=""
+              IS_PRERELEASE="false"
+              ;;
+            "canary")
+              TAG_PREFIX="canary-"
+              BRANCH_LABEL=" (Canary)"
+              IS_PRERELEASE="true"
+              ;;
+            "dev")
+              TAG_PREFIX="dev-"
+              BRANCH_LABEL=" (Dev)"
+              IS_PRERELEASE="true"
+              ;;
+          esac
+
+          # Generate proper version tag
+          VERSION_TAG="${TAG_PREFIX}v${VERSION_NAME}"
+          RELEASE_NAME="NagramX ${VERSION_NAME}${BRANCH_LABEL}"
+
+          # Get commit message
+          if [ "${{ github.event_name }}" = "push" ]; then
+            RELEASE_BODY="${{ github.event.head_commit.message }}"
+          else
+            RELEASE_BODY="${{ github.event.inputs.message }}"
+          fi
+
+          # Build release body with proper formatting
+          FULL_BODY=$(printf "%s\n\n**Version**: %s (%s)\n**Branch**: %s\n**Commit**: [%s](%s/%s/commit/%s)\n**Build Date**: %s" \
+            "$RELEASE_BODY" \
+            "$VERSION_NAME" \
+            "$VERSION_CODE" \
+            "$BRANCH_NAME" \
+            "${GITHUB_SHA:0:7}" \
+            "${{ github.server_url }}" \
+            "${{ github.repository }}" \
+            "${{ github.sha }}" \
+            "$(date -u +'%Y-%m-%d %H:%M UTC')")
+
+          # Create release using jq for proper JSON escaping
+          echo "Creating GitHub release ${VERSION_TAG}..."
+          JSON_PAYLOAD=$(jq -n \
+            --arg tag "$VERSION_TAG" \
+            --arg name "$RELEASE_NAME" \
+            --arg body "$FULL_BODY" \
+            --arg target "${{ github.sha }}" \
+            --argjson prerelease "$IS_PRERELEASE" \
+            '{
+              tag_name: $tag,
+              name: $name,
+              body: $body,
+              draft: false,
+              prerelease: $prerelease,
+              target_commitish: $target
+            }')
+
+          RELEASE_RESPONSE=$(curl -s -X POST \
+            -H "Authorization: token ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            -H "Content-Type: application/json" \
+            "https://api.github.com/repos/${{ github.repository }}/releases" \
+            -d "$JSON_PAYLOAD"
+          )
+
+          RELEASE_ID=$(echo "$RELEASE_RESPONSE" | grep -Po '"id":\s*\K[0-9]+' | head -1)
+          UPLOAD_URL=$(echo "$RELEASE_RESPONSE" | grep -Po '"upload_url":\s*"\K[^"]+' | sed 's/{.*//')
+
+          if [ -z "$RELEASE_ID" ] || [ -z "$UPLOAD_URL" ]; then
+            echo "❌ Failed to create release"
+            echo "Response: $RELEASE_RESPONSE"
+            exit 1
+          fi
+
+          echo "✅ Release created with ID: $RELEASE_ID"
+
+          # Upload APK with branch-specific filename
+          APK_FILE="${{ env.APK_PATH }}"
+          ORIGINAL_FILENAME=$(basename "$APK_FILE")
+
+          # Add branch prefix to filename if not main
+          if [ "$BRANCH_NAME" != "main" ]; then
+            APK_FILENAME="${BRANCH_NAME}-${ORIGINAL_FILENAME}"
+          else
+            APK_FILENAME="$ORIGINAL_FILENAME"
+          fi
+
+          echo "Uploading APK to GitHub release..."
+          UPLOAD_RESPONSE=$(curl -s -X POST \
+            -H "Authorization: token ${GITHUB_TOKEN}" \
+            -H "Content-Type: application/vnd.android.package-archive" \
+            --data-binary "@${APK_FILE}" \
+            "${UPLOAD_URL}?name=${APK_FILENAME}")
+
+          if echo "$UPLOAD_RESPONSE" | grep -q '"state":\s*"uploaded"'; then
+            echo "✅ APK uploaded to GitHub release"
+            echo "Release URL: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${VERSION_TAG}"
+          else
+            echo "❌ Failed to upload APK"
+            echo "Response: $UPLOAD_RESPONSE"
+            exit 1
+          fi
+
+      - name: Build Summary
+        if: always()
+        run: |
+          echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Check if build was skipped due to missing channel
+          if [ "${{ steps.check-secrets.outputs.skip_build }}" = "true" ]; then
+            echo "### ⏭️ Build Skipped" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "No Telegram channel configured for the **${{ github.ref_name }}** branch." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "To enable builds for this branch, configure the appropriate secret:" >> $GITHUB_STEP_SUMMARY
+            case "${{ github.ref_name }}" in
+              "canary")
+                echo "- **CHANNEL_CANARY**: Telegram channel ID for canary branch" >> $GITHUB_STEP_SUMMARY
+                ;;
+              "dev")
+                echo "- **CHANNEL_DEV**: Telegram channel ID for dev branch" >> $GITHUB_STEP_SUMMARY
+                ;;
+            esac
+            exit 0
+          fi
+
+          # Check if workflow failed
+          if [ "${{ job.status }}" != "success" ]; then
+            echo "### ❌ Build Failed" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+
+          # Only show build type if it was set
+          if [ -n "${{ env.BUILD_VARIANT }}" ]; then
+            echo "- **Build Type**: ${{ env.BUILD_VARIANT }}" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- **Build Type**: Not configured (workflow failed early)" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "- **Commit**: [${{ github.sha }}](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Triggered by**: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+
+          # Check if APK was actually built
+          if [ -f "${{ env.APK_PATH }}" ]; then
+            APK_SIZE_MB=$(echo "scale=1; $(stat -c%s "${{ env.APK_PATH }}") / 1048576" | bc)
+            echo "- **APK Size**: ${APK_SIZE_MB} MB" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- **APK**: Not built" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Check upload status based on actual completion
+          if [ "${{ github.event.inputs.skip_upload }}" = "yes" ] || [[ "${{ github.event.head_commit.message }}" == *"[skip upload]"* ]]; then
+            echo "- **Upload**: ⏭️ Skipped (by request)" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ job.status }}" != "success" ]; then
+            echo "- **Upload**: ❌ Not attempted (workflow failed)" >> $GITHUB_STEP_SUMMARY
+          elif [ -f "${{ env.APK_PATH }}" ]; then
+            echo "- **Upload**: ✅ Completed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- **Upload**: ❌ Failed (no APK found)" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Add failure reason if secrets check failed
+          if [ "${{ steps.check-secrets.outcome }}" = "failure" ] 2>/dev/null; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 🔒 Missing Required Secrets" >> $GITHUB_STEP_SUMMARY
+            echo "Please configure the required secrets in your repository settings." >> $GITHUB_STEP_SUMMARY
+          fi
