@@ -23,179 +23,15 @@ on:
         default: "no"
 
 jobs:
-  ffmpeg:
-    name: Native Build (FFmpeg)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Initialize Submodules
-        run: |
-          git submodule update --init --recursive TMessagesProj/jni/ffmpeg TMessagesProj/jni/libvpx TMessagesProj/jni/dav1d
-      - name: Fetch Status
-        run: |
-          git submodule status TMessagesProj/jni/ffmpeg > ffmpeg_status
-          git submodule status TMessagesProj/jni/libvpx > libvpx_status
-          git submodule status TMessagesProj/jni/dav1d > libdav1d_status
-      - name: FFmpeg Cache
-        id: cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            TMessagesProj/jni/ffmpeg/build
-            TMessagesProj/jni/libvpx/build
-            TMessagesProj/jni/dav1d/build
-          key: ${{ hashFiles('ffmpeg_status', 'libvpx_status', 'libdav1d_status', 'TMessagesProj/jni/*ffmpeg*.sh', 'TMessagesProj/jni/*libvpx*.sh', 'TMessagesProj/jni/*dav1d*.sh', 'TMessagesProj/jni/patches/ffmpeg/*') }}
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
-        if: steps.cache.outputs.cache-hit != 'true'
-        with:
-          python-version: "3.12"
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        if: steps.cache.outputs.cache-hit != 'true'
-        with:
-          java-version: "17"
-          distribution: "temurin"
-      - name: Setup Android SDK Tools
-        uses: android-actions/setup-android@v3
-        if: steps.cache.outputs.cache-hit != 'true'
-      - name: Install NDK
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          echo "y" | sdkmanager --install "ndk;21.4.7075529" "cmake;3.22.1" --sdk_root=${ANDROID_SDK_ROOT} &> /dev/null
-          echo "sdk.dir=${ANDROID_HOME}" > local.properties
-          echo "android.ndkversion=21.4.7075529" >> local.properties
-      - name: Native Build
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          ./run init action ffmpeg
-          ./run init libs libvpx
-          ./run init libs dav1d
-          ./run init libs ffmpeg
-
-  boringssl:
-    name: Native Build (BoringSSL)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Initialize Submodules
-        run: |
-          git submodule update --init --recursive TMessagesProj/jni/boringssl
-      - name: Fetch Status
-        run: |
-          git submodule status TMessagesProj/jni/boringssl > boringssl_status
-      - name: BoringSSL Cache
-        id: cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            TMessagesProj/jni/boringssl/build
-          key: ${{ hashFiles('boringssl_status') }}
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        if: steps.cache.outputs.cache-hit != 'true'
-        with:
-          java-version: "17"
-          distribution: "temurin"
-      - name: Setup Android SDK Tools
-        uses: android-actions/setup-android@v3
-        if: steps.cache.outputs.cache-hit != 'true'
-      - name: Install NDK
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          echo "y" | sdkmanager --install "ndk;21.4.7075529" "cmake;3.22.1" --sdk_root=${ANDROID_SDK_ROOT} &> /dev/null
-          echo "sdk.dir=${ANDROID_HOME}" > local.properties
-          echo "android.ndkversion=21.4.7075529" >> local.properties
-      - name: Native Build
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          ./run init action boringssl
-          ./run init libs boringssl
-
-  native:
-    name: Native Build (Telegram)
-    runs-on: ubuntu-latest
-    needs:
-      - ffmpeg
-      - boringssl
-    strategy:
-      matrix:
-        flavor:
-          - arm64-v8a
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Initialize Submodules
-        run: |
-          git submodule update --init --recursive TMessagesProj/jni/ffmpeg TMessagesProj/jni/libvpx TMessagesProj/jni/dav1d TMessagesProj/jni/boringssl
-      - name: Fetch Status
-        run: |
-          git submodule status TMessagesProj/jni/ffmpeg > ffmpeg_status
-          git submodule status TMessagesProj/jni/libvpx > libvpx_status
-          git submodule status TMessagesProj/jni/dav1d > libdav1d_status
-          git submodule status TMessagesProj/jni/boringssl > boringssl_status
-      - name: Native Cache
-        id: cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            TMessagesProj/src/main/libs
-          key: ${{ hashFiles('TMessagesProj/jni/**', 'ffmpeg_status', 'boringssl_status') }}-${{ matrix.flavor }}
-      - name: Checkout Library
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          git submodule update --init 'TMessagesProj/jni/*'
-      - name: FFmpeg Cache
-        uses: actions/cache@v4
-        if: steps.cache.outputs.cache-hit != 'true'
-        with:
-          path: |
-            TMessagesProj/jni/ffmpeg/build
-            TMessagesProj/jni/libvpx/build
-            TMessagesProj/jni/dav1d/build
-          key: ${{ hashFiles('ffmpeg_status', 'libvpx_status', 'libdav1d_status', 'TMessagesProj/jni/*ffmpeg*.sh', 'TMessagesProj/jni/*libvpx*.sh', 'TMessagesProj/jni/*dav1d*.sh', 'TMessagesProj/jni/patches/ffmpeg/*') }}
-      - name: BoringSSL Cache
-        uses: actions/cache@v4
-        if: steps.cache.outputs.cache-hit != 'true'
-        with:
-          path: |
-            TMessagesProj/jni/boringssl/build
-          key: ${{ hashFiles('boringssl_status') }}
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        if: steps.cache.outputs.cache-hit != 'true'
-        with:
-          java-version: "17"
-          distribution: "temurin"
-      - name: Setup Android SDK Tools
-        uses: android-actions/setup-android@v3
-        if: steps.cache.outputs.cache-hit != 'true'
-      - name: Install NDK
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          echo "y" | sdkmanager --install "ndk;21.4.7075529" "cmake;3.22.1" --sdk_root=${ANDROID_SDK_ROOT} &> /dev/null
-          echo "sdk.dir=${ANDROID_HOME}" > local.properties
-          echo "android.ndkversion=21.4.7075529" >> local.properties
-      - name: Fix BoringSSL
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          cd TMessagesProj/jni
-          ./patch_boringssl.sh
-      - name: Native Build
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          export NATIVE_TARGET="${{ matrix.flavor }}"
-          ./run libs native
-
   build-and-release:
     name: Build and Release
     runs-on: ubuntu-latest
-    needs:
-      - native
     env:
       NATIVE_TARGET: "arm64-v8a"
+      CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
+      CCACHE_HARDLINK: "true"
+      CCACHE_NOHASHDIR: "true"
+      CCACHE_MAXSIZE: "10G"
     steps:
       - name: Check Required Secrets
         id: check-secrets
@@ -269,39 +105,28 @@ jobs:
       - name: Checkout
         if: steps.check-secrets.outputs.skip_build != 'true'
         uses: actions/checkout@v4
-      - name: Set up JDK 17
+      - name: Set up JDK 21
         if: steps.check-secrets.outputs.skip_build != 'true'
         uses: actions/setup-java@v4
         with:
-          java-version: "17"
+          java-version: "21"
           distribution: "temurin"
+          cache: 'gradle'
+      - name: Set up Gradle
+        if: steps.check-secrets.outputs.skip_build != 'true'
+        uses: gradle/actions/setup-gradle@v4
+      - name: Set up ccache
+        if: steps.check-secrets.outputs.skip_build != 'true' && github.ref_name != 'main'
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          append-timestamp: false
       - name: Setup Android SDK Tools
         if: steps.check-secrets.outputs.skip_build != 'true'
         uses: android-actions/setup-android@v3
-
-      - name: Install NDK
-        if: steps.check-secrets.outputs.skip_build != 'true'
-        run: |
-          echo "y" | sdkmanager --install "ndk;21.4.7075529" "cmake;3.22.1" --sdk_root=${ANDROID_SDK_ROOT} &> /dev/null
-          echo "sdk.dir=${ANDROID_HOME}" > local.properties
-          echo "android.ndkversion=21.4.7075529" >> local.properties
-      - name: Initialize Submodules
-        if: steps.check-secrets.outputs.skip_build != 'true'
-        run: |
-          git submodule update --init --recursive TMessagesProj/jni/ffmpeg TMessagesProj/jni/boringssl
-      - name: Fetch Status
-        if: steps.check-secrets.outputs.skip_build != 'true'
-        run: |
-          git submodule status TMessagesProj/jni/ffmpeg > ffmpeg_status
-          git submodule status TMessagesProj/jni/boringssl > boringssl_status
-      - name: Native Cache (arm64-v8a)
-        if: steps.check-secrets.outputs.skip_build != 'true'
-        uses: actions/cache@v4
         with:
-          path: |
-            TMessagesProj/src/main/libs
-          key: ${{ hashFiles('TMessagesProj/jni/**', 'ffmpeg_status', 'boringssl_status') }}-arm64-v8a
-      - name: Configure Gradle
+          packages: "build-tools;36.0.0 ndk;27.2.12479018 platforms;android-36"
+
+      - name: Configure Android SDK Path
         if: steps.check-secrets.outputs.skip_build != 'true'
         run: |
           echo "sdk.dir=${ANDROID_HOME}" >> local.properties
@@ -309,16 +134,14 @@ jobs:
       - name: Modify Gradle JVM Args
         if: steps.check-secrets.outputs.skip_build != 'true'
         run: |
-          sed -i '/^org\.gradle\.jvmargs=/d' gradle.properties
-          echo "org.gradle.jvmargs=-Xmx8G -XX:MaxMetaspaceSize=2G -XX:+UseParallelGC -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8" >> gradle.properties
+          MEMORY_KB=$(awk '/MemTotal/ {print $2}' /proc/meminfo)
+          MEMORY_GB=$((MEMORY_KB / 1024 / 1024))
+          echo "Detected memory size: ${MEMORY_GB}GB"
+          if [ $MEMORY_GB -ge 12 ]; then
+            sed -i '/^org\.gradle\.jvmargs=/d' gradle.properties
+            echo "org.gradle.jvmargs=-Xmx8G -XX:MaxMetaspaceSize=2G -XX:+UseParallelGC -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8" >> gradle.properties
+          fi
           cat gradle.properties
-
-      - name: Gradle cache
-        if: steps.check-secrets.outputs.skip_build != 'true'
-        uses: actions/cache@v4
-        with:
-          path: ~/.gradle
-          key: gradle-${{ hashFiles('**/*.gradle') }}
 
       - name: Configure Build Type
         if: steps.check-secrets.outputs.skip_build != 'true'
@@ -330,14 +153,15 @@ jobs:
             sed -i 's/^-dontoptimize$/#-dontoptimize/' TMessagesProj/proguard-rules.pro
             echo "BUILD_VARIANT=Release" >> $GITHUB_ENV
             echo "✅ Configured for PRODUCTION build (optimized)"
-          elif [ "$BRANCH_NAME" = "canary" ]; then
-            # Beta build - keep some debug info
-            echo "BUILD_VARIANT=ReleaseDebug" >> $GITHUB_ENV
-            echo "🐤 Configured for CANARY build (beta with debug info)"
           else
-            # Dev build - full debug
-            echo "BUILD_VARIANT=Debug" >> $GITHUB_ENV
-            echo "🔧 Configured for DEBUG build (full debug features)"
+            # Staging/Canary/Dev builds - enable optimization but keep some debug info
+            sed -i 's/^-dontoptimize$/#-dontoptimize/' TMessagesProj/proguard-rules.pro
+            echo "BUILD_VARIANT=Staging" >> $GITHUB_ENV
+            if [ "$BRANCH_NAME" = "canary" ]; then
+              echo "🐤 Configured for CANARY build (staging)"
+            else
+              echo "🔧 Configured for DEV build (staging)"
+            fi
           fi
 
       - name: Build APK
@@ -349,18 +173,12 @@ jobs:
           # Build based on variant
           if [ "${{ env.BUILD_VARIANT }}" = "Release" ]; then
             ./gradlew TMessagesProj:assembleRelease
-          elif [ "${{ env.BUILD_VARIANT }}" = "ReleaseDebug" ]; then
-            ./gradlew TMessagesProj:assembleReleaseDebug
           else
-            ./gradlew TMessagesProj:assembleDebug
+            ./gradlew TMessagesProj:assembleStaging
           fi
 
-          # Find the appropriate APK
-          if [ "${{ env.BUILD_VARIANT }}" = "Debug" ]; then
-            APK=$(find TMessagesProj/build/outputs/apk -name '*arm64-v8a*debug*.apk' | head -1)
-          else
-            APK=$(find TMessagesProj/build/outputs/apk -name '*arm64-v8a*.apk' | grep -v debug | head -1)
-          fi
+          # Find the APK
+          APK=$(find TMessagesProj/build/outputs/apk -name '*arm64-v8a*.apk' | head -1)
 
           echo "APK_PATH=$APK" >> $GITHUB_ENV
           echo "BUILD_TIMESTAMP=$BUILD_TIMESTAMP" >> $GITHUB_ENV
@@ -428,11 +246,8 @@ jobs:
             "Release")
               BUILD_TYPE="Production"
               ;;
-            "ReleaseDebug")
-              BUILD_TYPE="Beta"
-              ;;
-            "Debug")
-              BUILD_TYPE="Debug"
+            "Staging")
+              BUILD_TYPE="Staging"
               ;;
           esac
 
