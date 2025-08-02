@@ -29,6 +29,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Initialize Submodules
+        run: |
+          git submodule update --init --recursive TMessagesProj/jni/ffmpeg TMessagesProj/jni/libvpx TMessagesProj/jni/dav1d
       - name: Fetch Status
         run: |
           git submodule status TMessagesProj/jni/ffmpeg > ffmpeg_status
@@ -77,6 +80,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Initialize Submodules
+        run: |
+          git submodule update --init --recursive TMessagesProj/jni/boringssl
       - name: Fetch Status
         run: |
           git submodule status TMessagesProj/jni/boringssl > boringssl_status
@@ -121,6 +127,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Initialize Submodules
+        run: |
+          git submodule update --init --recursive TMessagesProj/jni/ffmpeg TMessagesProj/jni/libvpx TMessagesProj/jni/dav1d TMessagesProj/jni/boringssl
       - name: Fetch Status
         run: |
           git submodule status TMessagesProj/jni/ffmpeg > ffmpeg_status
@@ -276,6 +285,10 @@ jobs:
           echo "y" | sdkmanager --install "ndk;21.4.7075529" "cmake;3.22.1" --sdk_root=${ANDROID_SDK_ROOT} &> /dev/null
           echo "sdk.dir=${ANDROID_HOME}" > local.properties
           echo "android.ndkversion=21.4.7075529" >> local.properties
+      - name: Initialize Submodules
+        if: steps.check-secrets.outputs.skip_build != 'true'
+        run: |
+          git submodule update --init --recursive TMessagesProj/jni/ffmpeg TMessagesProj/jni/boringssl
       - name: Fetch Status
         if: steps.check-secrets.outputs.skip_build != 'true'
         run: |
