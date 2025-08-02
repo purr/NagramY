@@ -515,41 +515,86 @@ jobs:
             "${{ github.sha }}" \
             "$(date -u +'%Y-%m-%d %H:%M UTC')")
 
-          # Create release using jq for proper JSON escaping
-          echo "Creating GitHub release ${VERSION_TAG}..."
-          JSON_PAYLOAD=$(jq -n \
-            --arg tag "$VERSION_TAG" \
-            --arg name "$RELEASE_NAME" \
-            --arg body "$FULL_BODY" \
-            --arg target "${{ github.sha }}" \
-            --argjson prerelease "$IS_PRERELEASE" \
-            '{
-              tag_name: $tag,
-              name: $name,
-              body: $body,
-              draft: false,
-              prerelease: $prerelease,
-              target_commitish: $target
-            }')
-
-          RELEASE_RESPONSE=$(curl -s -X POST \
+          # Check if release already exists
+          echo "Checking if release ${VERSION_TAG} already exists..."
+          EXISTING_RELEASE=$(curl -s \
             -H "Authorization: token ${GITHUB_TOKEN}" \
             -H "Accept: application/vnd.github.v3+json" \
-            -H "Content-Type: application/json" \
-            "https://api.github.com/repos/${{ github.repository }}/releases" \
-            -d "$JSON_PAYLOAD"
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/${VERSION_TAG}"
           )
 
-          RELEASE_ID=$(echo "$RELEASE_RESPONSE" | grep -Po '"id":\s*\K[0-9]+' | head -1)
-          UPLOAD_URL=$(echo "$RELEASE_RESPONSE" | grep -Po '"upload_url":\s*"\K[^"]+' | sed 's/{.*//')
+          # Check if we got a valid release response
+          EXISTING_RELEASE_ID=$(echo "$EXISTING_RELEASE" | grep -Po '"id":\s*\K[0-9]+' | head -1)
 
-          if [ -z "$RELEASE_ID" ] || [ -z "$UPLOAD_URL" ]; then
-            echo "❌ Failed to create release"
-            echo "Response: $RELEASE_RESPONSE"
-            exit 1
+          if [ -n "$EXISTING_RELEASE_ID" ]; then
+            echo "⚠️  Release ${VERSION_TAG} already exists (ID: $EXISTING_RELEASE_ID)"
+            echo "Updating existing release..."
+
+            # Update the existing release
+            JSON_PAYLOAD=$(jq -n \
+              --arg name "$RELEASE_NAME" \
+              --arg body "$FULL_BODY" \
+              --argjson prerelease "$IS_PRERELEASE" \
+              '{
+                name: $name,
+                body: $body,
+                prerelease: $prerelease
+              }')
+
+            RELEASE_RESPONSE=$(curl -s -X PATCH \
+              -H "Authorization: token ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github.v3+json" \
+              -H "Content-Type: application/json" \
+              "https://api.github.com/repos/${{ github.repository }}/releases/${EXISTING_RELEASE_ID}" \
+              -d "$JSON_PAYLOAD"
+            )
+
+            RELEASE_ID="$EXISTING_RELEASE_ID"
+            UPLOAD_URL=$(echo "$RELEASE_RESPONSE" | grep -Po '"upload_url":\s*"\K[^"]+' | sed 's/{.*//')
+
+            if [ -z "$UPLOAD_URL" ]; then
+              # If update failed, try to get upload URL from existing release
+              UPLOAD_URL=$(echo "$EXISTING_RELEASE" | grep -Po '"upload_url":\s*"\K[^"]+' | sed 's/{.*//')
+            fi
+
+            echo "✅ Release updated"
+          else
+            # Create new release
+            echo "Creating GitHub release ${VERSION_TAG}..."
+            JSON_PAYLOAD=$(jq -n \
+              --arg tag "$VERSION_TAG" \
+              --arg name "$RELEASE_NAME" \
+              --arg body "$FULL_BODY" \
+              --arg target "${{ github.sha }}" \
+              --argjson prerelease "$IS_PRERELEASE" \
+              '{
+                tag_name: $tag,
+                name: $name,
+                body: $body,
+                draft: false,
+                prerelease: $prerelease,
+                target_commitish: $target
+              }')
+
+            RELEASE_RESPONSE=$(curl -s -X POST \
+              -H "Authorization: token ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github.v3+json" \
+              -H "Content-Type: application/json" \
+              "https://api.github.com/repos/${{ github.repository }}/releases" \
+              -d "$JSON_PAYLOAD"
+            )
+
+            RELEASE_ID=$(echo "$RELEASE_RESPONSE" | grep -Po '"id":\s*\K[0-9]+' | head -1)
+            UPLOAD_URL=$(echo "$RELEASE_RESPONSE" | grep -Po '"upload_url":\s*"\K[^"]+' | sed 's/{.*//')
+
+            if [ -z "$RELEASE_ID" ] || [ -z "$UPLOAD_URL" ]; then
+              echo "❌ Failed to create release"
+              echo "Response: $RELEASE_RESPONSE"
+              exit 1
+            fi
+
+            echo "✅ Release created with ID: $RELEASE_ID"
           fi
-
-          echo "✅ Release created with ID: $RELEASE_ID"
 
           # Upload APK with branch-specific filename
           APK_FILE="${{ env.APK_PATH }}"
