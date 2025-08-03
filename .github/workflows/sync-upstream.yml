@@ -10,11 +10,99 @@ on:
         description: "Specific branch to sync (leave empty for all branches)"
         required: false
         default: ""
+      force_sync:
+        description: "Force sync even if no changes detected"
+        required: false
+        default: "false"
 
 jobs:
+  check-upstream-changes:
+    runs-on: ubuntu-latest
+    name: Check for upstream changes
+    outputs:
+      has_changes: ${{ steps.check.outputs.has_changes }}
+      branches_with_changes: ${{ steps.check.outputs.branches_with_changes }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check for upstream changes
+        id: check
+        run: |
+          # Add upstream remote
+          git remote add upstream https://github.com/risin42/NagramX.git || true
+          git fetch upstream
+
+          # Define branches to check
+          if [ "${{ github.event.inputs.branch }}" != "" ]; then
+            BRANCHES="${{ github.event.inputs.branch }}"
+          else
+            BRANCHES="main dev canary"
+          fi
+
+          # Track branches with changes
+          BRANCHES_WITH_CHANGES=""
+          HAS_CHANGES=false
+
+          echo "## Checking for upstream changes" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          for BRANCH in $BRANCHES; do
+            # Check if upstream branch exists
+            if ! git ls-remote --heads upstream $BRANCH | grep -q .; then
+              echo "⚠️ Branch $BRANCH doesn't exist upstream, skipping..."
+              echo "- ⚠️ $BRANCH: doesn't exist upstream" >> $GITHUB_STEP_SUMMARY
+              continue
+            fi
+
+            # Check if local branch exists
+            if ! git ls-remote --heads origin $BRANCH | grep -q .; then
+              echo "📝 Branch $BRANCH doesn't exist locally, will create it"
+              echo "- 📝 $BRANCH: new branch to create" >> $GITHUB_STEP_SUMMARY
+              BRANCHES_WITH_CHANGES="$BRANCHES_WITH_CHANGES $BRANCH"
+              HAS_CHANGES=true
+              continue
+            fi
+
+            # Get commit hashes
+            LOCAL_COMMIT=$(git rev-parse origin/$BRANCH)
+            UPSTREAM_COMMIT=$(git rev-parse upstream/$BRANCH)
+
+            if [ "$LOCAL_COMMIT" != "$UPSTREAM_COMMIT" ]; then
+              echo "🔄 Branch $BRANCH has upstream changes"
+              echo "- 🔄 $BRANCH: has upstream changes" >> $GITHUB_STEP_SUMMARY
+              echo "  - Local: \`${LOCAL_COMMIT:0:7}\`" >> $GITHUB_STEP_SUMMARY
+              echo "  - Upstream: \`${UPSTREAM_COMMIT:0:7}\`" >> $GITHUB_STEP_SUMMARY
+              BRANCHES_WITH_CHANGES="$BRANCHES_WITH_CHANGES $BRANCH"
+              HAS_CHANGES=true
+            else
+              echo "✅ Branch $BRANCH is up to date"
+              echo "- ✅ $BRANCH: up to date" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
+
+          # Set outputs
+          echo "has_changes=$HAS_CHANGES" >> $GITHUB_OUTPUT
+          echo "branches_with_changes=$BRANCHES_WITH_CHANGES" >> $GITHUB_OUTPUT
+
+          if [ "$HAS_CHANGES" = "false" ] && [ "${{ github.event.inputs.force_sync }}" != "true" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Result**: No upstream changes detected. Skipping sync." >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ github.event.inputs.force_sync }}" = "true" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Result**: Force sync enabled. Will sync all branches." >> $GITHUB_STEP_SUMMARY
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "branches_with_changes=$BRANCHES" >> $GITHUB_OUTPUT
+          fi
+
   sync-upstream:
     runs-on: ubuntu-latest
     name: Sync upstream branches
+    needs: check-upstream-changes
+    if: needs.check-upstream-changes.outputs.has_changes == 'true' || github.event.inputs.force_sync == 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -26,103 +114,225 @@ jobs:
         run: |
           git remote add upstream https://github.com/risin42/NagramX.git || true
           git fetch upstream
+
       - name: Configure Git
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
       - name: Sync branches
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Define branches to sync
-          if [ "${{ github.event.inputs.branch }}" != "" ]; then
+          # Get branches to sync
+          if [ "${{ github.event.inputs.force_sync }}" = "true" ] && [ "${{ github.event.inputs.branch }}" = "" ]; then
+            BRANCHES="main dev canary"
+          elif [ "${{ github.event.inputs.branch }}" != "" ]; then
             BRANCHES="${{ github.event.inputs.branch }}"
           else
-            BRANCHES="main dev canary"
+            BRANCHES="${{ needs.check-upstream-changes.outputs.branches_with_changes }}"
           fi
-          # Track if any branch was updated
+
+          # Track if any branch was actually updated
           UPDATED_BRANCHES=""
+          SYNC_SUMMARY=""
+
           for BRANCH in $BRANCHES; do
             echo "::group::Syncing $BRANCH branch"
-            # Check if upstream branch exists
+
+            # Skip if upstream branch doesn't exist
             if ! git ls-remote --heads upstream $BRANCH | grep -q .; then
               echo "⚠️ Branch $BRANCH doesn't exist upstream, skipping..."
               echo "::endgroup::"
               continue
             fi
-            # Checkout branch
-            git checkout $BRANCH 2>/dev/null || git checkout -b $BRANCH origin/$BRANCH
-            # Get current commit hashes
-            LOCAL_COMMIT=$(git rev-parse HEAD)
+
+            # Get the latest commit message from upstream for the release notes
             UPSTREAM_COMMIT=$(git rev-parse upstream/$BRANCH)
+            COMMIT_MESSAGE=$(git log -1 --pretty=format:"%s" upstream/$BRANCH)
+            COMMIT_AUTHOR=$(git log -1 --pretty=format:"%an" upstream/$BRANCH)
+
+            # Checkout branch
+            git checkout $BRANCH 2>/dev/null || git checkout -b $BRANCH upstream/$BRANCH
+
+            # Get current commit hash after checkout
+            LOCAL_COMMIT=$(git rev-parse HEAD)
+
+            # If we just created the branch, push it
+            if [ "$LOCAL_COMMIT" = "$UPSTREAM_COMMIT" ] && ! git ls-remote --heads origin $BRANCH | grep -q .; then
+              echo "📝 Creating new branch $BRANCH from upstream"
+              if git push -u origin $BRANCH; then
+                echo "✅ Branch $BRANCH created successfully!"
+                UPDATED_BRANCHES="$UPDATED_BRANCHES $BRANCH"
+                SYNC_SUMMARY="${SYNC_SUMMARY}\n- 📝 Created new branch $BRANCH"
+              else
+                echo "❌ Failed to create branch $BRANCH"
+              fi
+              echo "::endgroup::"
+              continue
+            fi
+
+            # Skip if already up to date
             if [ "$LOCAL_COMMIT" = "$UPSTREAM_COMMIT" ]; then
               echo "✅ Branch $BRANCH is already up to date"
               echo "::endgroup::"
               continue
             fi
+
             echo "📊 Local: $LOCAL_COMMIT"
             echo "📊 Upstream: $UPSTREAM_COMMIT"
+
             # Try to merge upstream changes
             echo "🔄 Attempting to merge upstream/$BRANCH..."
             if git merge upstream/$BRANCH --no-edit; then
               echo "✅ Successfully merged upstream changes"
+
+              # Get merge commit info
+              MERGE_COMMIT=$(git rev-parse HEAD)
+
               # Push the changes
               echo "📤 Pushing to origin/$BRANCH..."
               if git push origin $BRANCH; then
                 echo "✅ Branch $BRANCH synced successfully!"
                 UPDATED_BRANCHES="$UPDATED_BRANCHES $BRANCH"
+                SYNC_SUMMARY="${SYNC_SUMMARY}\n- ✅ Synced $BRANCH: ${COMMIT_MESSAGE} (by ${COMMIT_AUTHOR})"
+
+                # Store sync metadata for duplicate prevention
+                echo "${BRANCH}:${UPSTREAM_COMMIT}:${MERGE_COMMIT}" >> sync_metadata.txt
               else
                 echo "❌ Failed to push $BRANCH"
               fi
             else
               echo "❌ Merge conflict detected on $BRANCH branch"
               git merge --abort
+
               # Create an issue about the conflict
               ISSUE_TITLE="Merge conflict on $BRANCH branch"
-              ISSUE_BODY="Automatic sync failed due to merge conflicts between origin/$BRANCH and upstream/$BRANCH.\n\n**Upstream commit**: [\`${UPSTREAM_COMMIT:0:7}\`](https://github.com/risin42/NagramX/commit/$UPSTREAM_COMMIT)\n**Local commit**: [\`${LOCAL_COMMIT:0:7}\`](https://github.com/${{ github.repository }}/commit/$LOCAL_COMMIT)\n\nPlease resolve the conflicts manually:\n\`\`\`bash\ngit checkout $BRANCH\ngit pull upstream $BRANCH\n# Resolve conflicts\ngit add .\ngit commit\ngit push origin $BRANCH\n\`\`\`"
+              ISSUE_BODY="Automatic sync failed due to merge conflicts between origin/$BRANCH and upstream/$BRANCH.\n\n**Upstream commit**: [\`${UPSTREAM_COMMIT:0:7}\`](https://github.com/risin42/NagramX/commit/$UPSTREAM_COMMIT)\n**Local commit**: [\`${LOCAL_COMMIT:0:7}\`](https://github.com/${{ github.repository }}/commit/$LOCAL_COMMIT)\n\n**Latest upstream change**: ${COMMIT_MESSAGE} (by ${COMMIT_AUTHOR})\n\nPlease resolve the conflicts manually:\n\`\`\`bash\ngit checkout $BRANCH\ngit pull upstream $BRANCH\n# Resolve conflicts\ngit add .\ngit commit\ngit push origin $BRANCH\n\`\`\`"
+
               # Check if issue already exists
               EXISTING_ISSUE=$(gh issue list --label "sync-conflict" --state open --json title --jq ".[] | select(.title == \"$ISSUE_TITLE\") | .title" | head -n1)
+
               if [ -z "$EXISTING_ISSUE" ]; then
                 gh issue create --title "$ISSUE_TITLE" --body "$ISSUE_BODY" --label "sync-conflict" || true
+              else
+                echo "ℹ️ Conflict issue already exists for $BRANCH"
               fi
+
+              SYNC_SUMMARY="${SYNC_SUMMARY}\n- ❌ Conflict on $BRANCH: ${COMMIT_MESSAGE}"
             fi
             echo "::endgroup::"
           done
-          # Save updated branches for next job
+
+          # Save outputs
           echo "UPDATED_BRANCHES=$UPDATED_BRANCHES" >> $GITHUB_ENV
+          echo "SYNC_SUMMARY<<EOF" >> $GITHUB_ENV
+          echo -e "$SYNC_SUMMARY" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+          # Upload sync metadata as artifact
+          if [ -f sync_metadata.txt ]; then
+            echo "SYNC_METADATA_EXISTS=true" >> $GITHUB_ENV
+          fi
+
           # Create summary
           echo "## Sync Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           if [ -z "$UPDATED_BRANCHES" ]; then
-            echo "No branches were updated." >> $GITHUB_STEP_SUMMARY
+            echo "No branches were successfully updated." >> $GITHUB_STEP_SUMMARY
           else
-            echo "### Updated branches:" >> $GITHUB_STEP_SUMMARY
-            for BRANCH in $UPDATED_BRANCHES; do
-              echo "- ✅ $BRANCH" >> $GITHUB_STEP_SUMMARY
-            done
+            echo "### Successfully synced branches:" >> $GITHUB_STEP_SUMMARY
+            echo -e "$SYNC_SUMMARY" >> $GITHUB_STEP_SUMMARY
           fi
-      - name: Trigger build workflow for updated branches
+
+      - name: Upload sync metadata
+        if: env.SYNC_METADATA_EXISTS == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sync-metadata-${{ github.run_id }}
+          path: sync_metadata.txt
+          retention-days: 7
+
+      - name: Check for duplicate builds
         if: env.UPDATED_BRANCHES != ''
+        id: check-duplicates
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # For each updated branch, trigger the build workflow
+          # For each updated branch, check if a build is already running
+          BRANCHES_TO_BUILD=""
+
           for BRANCH in $UPDATED_BRANCHES; do
+            echo "Checking for active builds on $BRANCH..."
+
+            # Check for active workflow runs on this branch
+            ACTIVE_RUNS=$(gh run list \
+              --workflow=build.yml \
+              --branch=$BRANCH \
+              --status=in_progress \
+              --json status \
+              --jq 'length')
+
+            if [ "$ACTIVE_RUNS" -gt 0 ]; then
+              echo "⏳ Build already in progress for $BRANCH, skipping..."
+            else
+              # Check if the last successful build was for the current commit
+              LAST_BUILD_COMMIT=$(gh run list \
+                --workflow=build.yml \
+                --branch=$BRANCH \
+                --status=completed \
+                --limit=1 \
+                --json headSha,conclusion \
+                --jq '.[] | select(.conclusion == "success") | .headSha' || echo "none")
+
+              CURRENT_COMMIT=$(git rev-parse origin/$BRANCH)
+
+              if [ "$LAST_BUILD_COMMIT" = "$CURRENT_COMMIT" ]; then
+                echo "✅ Latest commit already built for $BRANCH, skipping..."
+              else
+                echo "🔨 Will trigger build for $BRANCH"
+                BRANCHES_TO_BUILD="$BRANCHES_TO_BUILD $BRANCH"
+              fi
+            fi
+          done
+
+          echo "BRANCHES_TO_BUILD=$BRANCHES_TO_BUILD" >> $GITHUB_ENV
+
+      - name: Trigger build workflow for updated branches
+        if: env.BRANCHES_TO_BUILD != ''
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # For each branch that needs building, trigger the build workflow
+          for BRANCH in $BRANCHES_TO_BUILD; do
             echo "🔨 Triggering build for $BRANCH branch..."
+
+            # Create a meaningful message with sync summary
+            BUILD_MESSAGE="Auto-build after upstream sync"
+            if [ -n "$SYNC_SUMMARY" ]; then
+              # Extract just this branch's summary
+              BRANCH_SUMMARY=$(echo -e "$SYNC_SUMMARY" | grep "$BRANCH:" | sed 's/^- [^ ]* //' || echo "")
+              if [ -n "$BRANCH_SUMMARY" ]; then
+                BUILD_MESSAGE="Sync: $BRANCH_SUMMARY"
+              fi
+            fi
+
             # Trigger build workflow
             curl -X POST \
               -H "Accept: application/vnd.github+json" \
               -H "Authorization: Bearer $GITHUB_TOKEN" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "https://api.github.com/repos/${{ github.repository }}/actions/workflows/build.yml/dispatches" \
-              -d "{\"ref\":\"$BRANCH\",\"inputs\":{\"message\":\"Auto-build after upstream sync\"}}"
+              -d "{\"ref\":\"$BRANCH\",\"inputs\":{\"message\":\"$BUILD_MESSAGE\"}}"
+
             echo "✅ Build triggered for $BRANCH"
+
             # Add to summary
             echo "- 🔨 Build triggered for $BRANCH" >> $GITHUB_STEP_SUMMARY
           done
   cleanup-old-runs:
     runs-on: ubuntu-latest
-    needs: sync-upstream
+    needs: [check-upstream-changes, sync-upstream]
     if: always()
     steps:
       - name: Delete old workflow runs
