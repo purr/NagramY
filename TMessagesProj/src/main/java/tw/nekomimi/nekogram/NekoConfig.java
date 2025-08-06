@@ -31,6 +31,7 @@ import tw.nekomimi.nekogram.config.ConfigItem;
 import tw.nekomimi.nekogram.helpers.CloudSettingsHelper;
 
 @SuppressLint("ApplySharedPref")
+@SuppressWarnings("unused")
 public class NekoConfig {
 
     public static final int TABLET_AUTO = 0;
@@ -48,6 +49,11 @@ public class NekoConfig {
     public static final int DRAWER_BACKGROUND_BIG_AVATAR = 2;
     public static final int DRAWER_BACKGROUND_WALLPAPER = 3;
 
+    public static final int DNS_TYPE_DEFAULT = 0;
+    public static final int DNS_TYPE_NAX = 1;
+    public static final int DNS_TYPE_SYSTEM = 2;
+    public static final int DNS_TYPE_CUSTOM_DOH = 3;
+
     public static final SharedPreferences preferences = ApplicationLoader.applicationContext.getSharedPreferences("nkmrcfg", Context.MODE_PRIVATE);
     public static final Object sync = new Object();
     public static final String channelAliasPrefix = "channelAliasPrefix_";
@@ -58,7 +64,7 @@ public class NekoConfig {
 
     // Configs
     public static ConfigItem configMigrated = addConfig("ConfigMigrated", configTypeBool, false);
-    public static ConfigItem largeAvatarInDrawer = addConfig("AvatarAsBackground", configTypeInt, 0); // 0:TG Default 1:NekoX Default 2:Large Avatar
+    public static ConfigItem largeAvatarInDrawer = addConfig("AvatarAsBackground", configTypeInt, DRAWER_BACKGROUND_WALLPAPER);
     public static ConfigItem unreadBadgeOnBackButton = addConfig("unreadBadgeOnBackButton", configTypeBool, false);
     public static ConfigItem useCustomEmoji = addConfig("useCustomEmoji", configTypeBool, false);
     public static ConfigItem repeatConfirm = addConfig("repeatConfirm", configTypeBool, true);
@@ -129,13 +135,14 @@ public class NekoConfig {
     public static ConfigItem askBeforeCall = addConfig("AskBeforeCalling", configTypeBool, true);
     public static ConfigItem disableNumberRounding = addConfig("DisableNumberRounding", configTypeBool, false);
 
+    public static ConfigItem dnsType = addConfig("DnsType", configTypeInt, DNS_TYPE_DEFAULT);
+    public static ConfigItem customDoH = addConfig("CustomDoH", configTypeString, "");
     public static ConfigItem hideProxyByDefault = addConfig("HideProxyByDefault", configTypeBool, true);
     public static ConfigItem useProxyItem = addConfig("UseProxyItem", configTypeBool, true);
 
     public static ConfigItem disableAppBarShadow = addConfig("DisableAppBarShadow", configTypeBool, false);
     public static ConfigItem mediaPreview = addConfig("MediaPreview", configTypeBool, true);
 
-    public static ConfigItem disableVibration = addConfig("DisableVibration", configTypeBool, false);
     public static ConfigItem autoPauseVideo = addConfig("AutoPauseVideo", configTypeBool, false);
     public static ConfigItem disableProximityEvents = addConfig("DisableProximityEvents", configTypeBool, false);
 
